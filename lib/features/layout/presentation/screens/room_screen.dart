@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/colors.dart';
@@ -15,15 +14,58 @@ import '../../domain/layout_state.dart';
 import '../providers/layout_provider.dart';
 import '../widgets/main_video_view.dart';
 import '../widgets/thumbnail_bar.dart';
+import '../../../remote_control/presentation/providers/remote_control_provider.dart';
+import '../../../remote_control/presentation/widgets/remote_control_permission_dialog.dart';
+import '../../../remote_control/domain/remote_control_state.dart';
 
-class RoomScreen extends ConsumerWidget {
+class RoomScreen extends ConsumerStatefulWidget {
   const RoomScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RoomScreen> createState() => _RoomScreenState();
+}
+
+class _RoomScreenState extends ConsumerState<RoomScreen> {
+  bool _dialogShowing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _setupListeners());
+  }
+
+  void _setupListeners() {
+    ref.listen(remoteControlStateProvider, (prev, next) {
+      final state = next.valueOrNull;
+      if (state == null) return;
+      if (state.phase == RemoteControlPhase.beingRequested &&
+          state.participantIdentity != null &&
+          !_dialogShowing) {
+        _dialogShowing = true;
+        RemoteControlPermissionDialog.show(
+          context,
+          state.participantIdentity!,
+        ).then((_) => _dialogShowing = false);
+      } else if (state.phase == RemoteControlPhase.beingControlled &&
+          state.participantIdentity != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${state.participantIdentity} is controlling your screen',
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final layoutMode = ref.watch(layoutModeProvider);
     final focused = ref.watch(focusedParticipantProvider);
     final isCapturing = ref.watch(isCapturingProvider);
+    final isBeingControlled = ref.watch(isBeingControlledProvider);
     final allParticipants =
         ref.watch(participantsProvider).valueOrNull ?? [];
 
@@ -33,11 +75,19 @@ class RoomScreen extends ConsumerWidget {
         actions: [
           const ConnectionStatusBar(),
           const SizedBox(width: AppDimensions.sm),
-          if (!isCapturing)
+          if (isBeingControlled)
+            IconButton(
+              icon: Icon(Icons.stop_screen_share, color: Colors.red),
+              tooltip: 'Stop being controlled',
+              onPressed: () {
+                ref.read(remoteControlServiceProvider).stopBeingControlled();
+              },
+            ),
+            if (!isCapturing)
             IconButton(
               icon: const Icon(Icons.screen_share_outlined),
               tooltip: 'Share Screen',
-              onPressed: () => _onShareScreen(context, ref),
+              onPressed: () => _onShareScreen(),
             )
           else
             IconButton(
@@ -95,7 +145,7 @@ class RoomScreen extends ConsumerWidget {
 
   Widget _buildFocusLayout(
     BuildContext context,
-    WidgetRef ref,
+    WidgetRef widgetRef,
     ParticipantEntity? focused,
     List<ParticipantEntity> participants,
   ) {
@@ -157,7 +207,7 @@ class RoomScreen extends ConsumerWidget {
     );
   }
 
-  void _onShareScreen(BuildContext context, WidgetRef ref) {
+  void _onShareScreen() {
     CapturePermissionDialog.show(
       context,
       onStart: () async {

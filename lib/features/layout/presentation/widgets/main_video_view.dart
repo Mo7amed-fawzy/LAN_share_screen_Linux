@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 import '../../../../core/theme/colors.dart';
 import '../../../../core/theme/dimensions.dart';
 import '../../../participant/domain/participant_entity.dart';
 import '../../../../shared/widgets/video_renderer.dart';
+import '../../../remote_control/presentation/widgets/remote_control_overlay.dart';
+import '../../../remote_control/presentation/providers/remote_control_provider.dart';
 
-class MainVideoView extends StatelessWidget {
+class MainVideoView extends ConsumerWidget {
   final ParticipantEntity? participant;
 
   const MainVideoView({super.key, required this.participant});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     if (participant == null) {
       return Container(
         decoration: BoxDecoration(
@@ -50,6 +53,11 @@ class MainVideoView extends StatelessWidget {
       );
     }
 
+    final isControlling = ref.watch(isControllingProvider);
+    final isRequesting = ref.watch(isRequestingProvider);
+    final isBeingControlled = ref.watch(isBeingControlledProvider);
+    final service = ref.read(remoteControlServiceProvider);
+
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surfaceLight,
@@ -61,9 +69,11 @@ class MainVideoView extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           if (participant!.hasVideo && participant!.screenTrack != null)
-            VideoRenderer(
-              track: participant!.screenTrack!,
-              mirrorMode: lk.VideoViewMirrorMode.off,
+            RemoteControlOverlay(
+              child: VideoRenderer(
+                track: participant!.screenTrack!,
+                mirrorMode: lk.VideoViewMirrorMode.off,
+              ),
             )
           else
             const Center(
@@ -140,6 +150,22 @@ class MainVideoView extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+            ),
+          if (!participant!.isLocal &&
+              participant!.hasVideo &&
+              !isControlling &&
+              !isRequesting &&
+              !isBeingControlled)
+            Positioned(
+              bottom: AppDimensions.md,
+              right: AppDimensions.md,
+              child: FloatingActionButton.small(
+                heroTag: 'request_control',
+                onPressed: () => service.requestControl(participant!.identity),
+                tooltip: 'Request Remote Control',
+                backgroundColor: AppColors.primary,
+                child: const Icon(Icons.cast_connected, size: 20),
               ),
             ),
         ],
