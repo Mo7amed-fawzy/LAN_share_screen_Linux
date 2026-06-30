@@ -5,6 +5,11 @@ import '../error/error_handler.dart';
 
 class LiveKitClient {
   lk.Room? _room;
+  final _connectionStateController =
+      StreamController<lk.ConnectionState>.broadcast();
+
+  Stream<lk.ConnectionState> get connectionStateStream =>
+      _connectionStateController.stream;
 
   lk.Room get room {
     if (_room == null) {
@@ -31,6 +36,9 @@ class LiveKitClient {
       ),
     );
 
+    _room!.addListener(_onRoomUpdate);
+    _connectionStateController.add(lk.ConnectionState.connecting);
+
     try {
       await _room!.connect(
         url,
@@ -43,10 +51,17 @@ class LiveKitClient {
       );
       return _room!;
     } catch (e, s) {
+      _room?.removeListener(_onRoomUpdate);
       unawaited(_room?.dispose());
       _room = null;
+      _connectionStateController.add(lk.ConnectionState.disconnected);
       throw handleError(e, s);
     }
+  }
+
+  void _onRoomUpdate() {
+    if (_room == null) return;
+    _connectionStateController.add(_room!.connectionState);
   }
 
   Future<void> disconnect() async {
@@ -55,13 +70,17 @@ class LiveKitClient {
     } catch (e, s) {
       logError('Error disconnecting', e, s);
     } finally {
+      _room?.removeListener(_onRoomUpdate);
       unawaited(_room?.dispose());
       _room = null;
+      _connectionStateController.add(lk.ConnectionState.disconnected);
     }
   }
 
   void dispose() {
+    _room?.removeListener(_onRoomUpdate);
     unawaited(_room?.dispose());
     _room = null;
+    _connectionStateController.close();
   }
 }
