@@ -80,7 +80,7 @@ class _RemoteControlOverlayState extends ConsumerState<RemoteControlOverlay> {
     return Stack(
       children: [
         widget.child,
-        if (_isControlling)
+        if (_isControlling) ...[
           Positioned.fill(
             child: Listener(
               onPointerMove: _onPointerMove,
@@ -91,72 +91,67 @@ class _RemoteControlOverlayState extends ConsumerState<RemoteControlOverlay> {
                 focusNode: _focusNode,
                 autofocus: true,
                 onKeyEvent: _onKeyEvent,
-                child: Container(
-                  color: Colors.transparent,
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        top: 8,
-                        left: 0,
-                        right: 0,
-                        child: Center(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.red.withValues(alpha: 0.8),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                              child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.screen_lock_portrait,
-                                    size: 16, color: Colors.white),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Remote Control Active',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
+                child: Container(color: Colors.transparent),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 8,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.8),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.screen_lock_portrait,
+                        size: 16, color: Colors.white),
+                    SizedBox(width: 6),
+                    Text(
+                      'Remote Control Active',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
                       ),
-                      Positioned(
-                        bottom: 16,
-                        left: 0,
-                        right: 0,
-                        child: Center(
-                          child: ElevatedButton.icon(
-                            onPressed: () {
-                              _service?.releaseControl();
-                              _focusNode.unfocus();
-                            },
-                            icon: const Icon(Icons.stop, size: 16),
-                            label: const Text('Release Control'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: 16,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  _service?.releaseControl();
+                  _focusNode.unfocus();
+                },
+                icon: const Icon(Icons.stop, size: 16),
+                label: const Text('Release Control'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
                   ),
                 ),
               ),
             ),
           ),
+        ],
       ],
     );
   }

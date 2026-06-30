@@ -4,19 +4,22 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 import '../../../core/error/error_handler.dart';
-import '../../room/domain/room_service.dart';
-import '../../room/domain/room_state.dart';
+import '../../../core/network/connection/connection_manager.dart';
+import '../../../core/network/connection/connection_state.dart';
+import '../../../core/network/livekit_client.dart';
 import 'input_event.dart';
 import 'remote_control_state.dart';
 
 class RemoteControlService {
-  final RoomService _roomService;
+  final LiveKitClient _liveKitClient;
+  final ConnectionManager _connectionManager;
   StreamSubscription? _connectionSub;
   Future<void> Function()? _dataCancel;
+  bool _isConnected = false;
 
   final _stateController = StreamController<RemoteControlState>.broadcast();
   final _requestFromController =
-      StreamController<String>.broadcast(); // identity of requester
+      StreamController<String>.broadcast();
 
   RemoteControlState _state = const RemoteControlState();
   int? _screenWidth;
@@ -26,26 +29,37 @@ class RemoteControlService {
   Stream<String> get requestFromStream => _requestFromController.stream;
   RemoteControlState get currentState => _state;
 
-  RemoteControlService(this._roomService) {
+  RemoteControlService({
+    required LiveKitClient liveKitClient,
+    required ConnectionManager connectionManager,
+  })  : _liveKitClient = liveKitClient,
+        _connectionManager = connectionManager {
     debugPrint('[RemoteControlService] init');
-    _connectionSub = _roomService.connectionStateStream.listen((s) {
-      if (s == RoomConnectionState.connected) {
+    _connectionSub = _connectionManager.stateStream.listen((s) {
+      if (s.phase == ConnectionPhase.connected ||
+          s.phase == ConnectionPhase.hostReady) {
         _onConnected();
-      } else if (s == RoomConnectionState.disconnected) {
+      } else if (s.phase == ConnectionPhase.initializing) {
         _onDisconnected();
       }
     });
   }
 
   void _onConnected() {
+    if (_isConnected) {
+      return;
+    }
+    _isConnected = true;
     debugPrint('[RemoteControlService] connected, setting up data listener');
-    final room = _roomService.room;
+    final room = _liveKitClient.isConnected ? _liveKitClient.room : null;
     if (room == null) return;
+    _dataCancel?.call();
     _dataCancel = room.events.on<lk.DataReceivedEvent>(_onDataReceived);
   }
 
   void _onDisconnected() {
-    debugPrint('[RemoteControlService] disconnected, cleaning up');
+    if (!_isConnected) return;
+    _isConnected = false;
     _dataCancel?.call();
     _dataCancel = null;
     _updateState(const RemoteControlState());
@@ -58,8 +72,6 @@ class RemoteControlService {
       final type = json['type'] as String;
       final sender = event.participant?.identity ?? 'unknown';
 
-      debugPrint('[RemoteControlService] received type=$type from=$sender');
-
       switch (type) {
         case 'request_control':
           _onControlRequest(sender);
@@ -68,7 +80,7 @@ class RemoteControlService {
         case 'deny_control':
           _onControlDenied();
         case 'release_control':
-          _onControlReleased();
+          _onControlReleased(json);
         case 'input_event':
           _onInputEvent(json);
         case 'screen_size_query':
@@ -80,18 +92,21 @@ class RemoteControlService {
   }
 
   Future<RemoteControlState> requestControl(String identity) async {
-    debugPrint('[RemoteControlService] requestControl: $identity');
     _updateState(RemoteControlState(
       phase: RemoteControlPhase.requesting,
       participantIdentity: identity,
     ));
-    _sendMessage({'type': 'request_control'});
+    _sendMessage({'type': 'request_control'}, target: identity);
     return currentState;
   }
 
+  void _sendReleaseControl(String reason, {String? target}) {
+    _sendMessage({'type': 'release_control', 'reason': reason}, target: target);
+  }
+
   void grantControl(String identity) async {
-    debugPrint('[RemoteControlService] grantControl: $identity');
-    _sendMessage({'type': 'grant_control'});
+    if (_state.phase == RemoteControlPhase.beingControlled) return;
+    _sendMessage({'type': 'grant_control'}, target: identity);
     await _detectScreenSize();
     _updateState(RemoteControlState(
       phase: RemoteControlPhase.beingControlled,
@@ -100,31 +115,42 @@ class RemoteControlService {
   }
 
   void denyControl(String identity) {
-    debugPrint('[RemoteControlService] denyControl: $identity');
-    _sendMessage({'type': 'deny_control'});
+    _sendMessage({'type': 'deny_control'}, target: identity);
     _updateState(const RemoteControlState());
   }
 
   void releaseControl() {
-    debugPrint('[RemoteControlService] releaseControl');
-    _sendMessage({'type': 'release_control'});
-    _updateState(const RemoteControlState());
+    final target = _state.participantIdentity;
+    _sendReleaseControl('released_by_controller', target: target);
+    _updateState(RemoteControlState(releaseReason: 'released_by_controller'));
   }
 
-  void stopBeingControlled() {
-    debugPrint('[RemoteControlService] stopBeingControlled');
-    _updateState(const RemoteControlState());
+  void stopBeingControlled({String reason = 'stopped_by_sharer'}) {
+    final target = _state.participantIdentity;
+    _sendReleaseControl(reason, target: target);
+    _updateState(RemoteControlState(releaseReason: reason));
   }
+
+  DateTime _lastInputSend = DateTime.now();
+  static const Duration _throttle = Duration(milliseconds: 16);
 
   Future<void> sendInputEvent(InputEvent event) async {
     if (_state.phase != RemoteControlPhase.controlling) return;
-    debugPrint('[RemoteControlService] sendInputEvent: ${event.type}');
+    final now = DateTime.now();
+    if (event.type == InputEventType.mouseMove &&
+        now.difference(_lastInputSend) < _throttle) return;
+    _lastInputSend = now;
+    final target = _state.participantIdentity;
     final map = event.toJson();
     map['type'] = 'input_event';
-    _sendMessage(map);
+    _sendMessage(map, target: target);
   }
 
   void _onControlRequest(String identity) {
+    if (const bool.fromEnvironment('AUTO_TEST', defaultValue: false)) {
+      grantControl(identity);
+      return;
+    }
     if (_state.phase == RemoteControlPhase.beingRequested ||
         _state.phase == RemoteControlPhase.beingControlled) return;
     _updateState(RemoteControlState(
@@ -135,18 +161,17 @@ class RemoteControlService {
   }
 
   void _onControlGranted() {
-    debugPrint('[RemoteControlService] control granted!');
+    if (_state.phase != RemoteControlPhase.requesting) return;
     _updateState(_state.copyWith(phase: RemoteControlPhase.controlling));
   }
 
   void _onControlDenied() {
-    debugPrint('[RemoteControlService] control denied');
     _updateState(const RemoteControlState());
   }
 
-  void _onControlReleased() {
-    debugPrint('[RemoteControlService] control released by controller');
-    _updateState(const RemoteControlState());
+  void _onControlReleased(Map<String, dynamic> json) {
+    final reason = json['reason'] as String?;
+    _updateState(RemoteControlState(releaseReason: reason));
   }
 
   void _onInputEvent(Map<String, dynamic> json) async {
@@ -207,7 +232,6 @@ class RemoteControlService {
         final parts = (result.stdout as String).trim().split(' ');
         _screenWidth = int.tryParse(parts.isNotEmpty ? parts[0] : '');
         _screenHeight = int.tryParse(parts.length > 1 ? parts[1] : '');
-        debugPrint('[RemoteControlService] screen size: $_screenWidth x $_screenHeight');
       }
     } catch (e) {
       debugPrint('[RemoteControlService] could not detect screen size: $e');
@@ -219,14 +243,19 @@ class RemoteControlService {
       'type': 'screen_size_info',
       'width': _screenWidth ?? 1920,
       'height': _screenHeight ?? 1080,
-    });
+    }, target: toIdentity);
   }
 
-  void _sendMessage(Map<String, dynamic> json) {
+  void _sendMessage(Map<String, dynamic> json, {String? target}) {
     try {
       final bytes = utf8.encode(jsonEncode(json));
-      final room = _roomService.room;
-      room?.localParticipant?.publishData(bytes.toList(), reliable: true, topic: 'remote_control');
+      final room = _liveKitClient.isConnected ? _liveKitClient.room : null;
+      room?.localParticipant?.publishData(
+        bytes.toList(),
+        reliable: true,
+        topic: 'remote_control',
+        destinationIdentities: target != null ? [target] : null,
+      );
     } catch (e, s) {
       logError('[RemoteControlService] sendMessage failed', e, s);
     }

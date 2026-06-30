@@ -1,11 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../room/presentation/providers/room_provider.dart';
+import '../../../../core/network/connection/connection_provider.dart';
 import '../../domain/remote_control_service.dart';
 import '../../domain/remote_control_state.dart';
 
 final remoteControlServiceProvider = Provider<RemoteControlService>((ref) {
-  final roomService = ref.watch(roomServiceProvider);
-  final service = RemoteControlService(roomService);
+  final manager = ref.watch(connectionManagerProvider);
+  final service = RemoteControlService(
+    liveKitClient: manager.liveKitClient,
+    connectionManager: manager,
+  );
   ref.onDispose(() => service.dispose());
   return service;
 });
