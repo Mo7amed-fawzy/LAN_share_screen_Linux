@@ -11,6 +11,7 @@ class ParticipantRepository {
   final _participantsController =
       StreamController<List<ParticipantEntity>>.broadcast();
   StreamSubscription? _connectionSubscription;
+  Future<void> Function()? _eventsCancel;
   bool _listening = false;
 
   ParticipantRepository(this._roomRepository) {
@@ -26,14 +27,14 @@ class ParticipantRepository {
       final room = _roomRepository.room;
       if (room != null) {
         debugPrint('[ParticipantRepository] adding room listener');
-        room.addListener(_onParticipantsChanged);
+        _eventsCancel = room.events.on<lk.RoomEvent>((_) => _emitParticipants());
         _listening = true;
         _emitParticipants();
       }
     } else if (state == RoomConnectionState.disconnected) {
-      final room = _roomRepository.room;
-      if (room != null && _listening) {
-        room.removeListener(_onParticipantsChanged);
+      if (_listening) {
+        _eventsCancel?.call();
+        _eventsCancel = null;
         _listening = false;
       }
       _participantsController.add([]);

@@ -23,7 +23,8 @@ class CaptureActions {
   Future<void> start({CaptureConfig config = const CaptureConfig()}) async {
     debugPrint('[CaptureActions] start');
     await service.startCapture(config: config);
-    debugPrint('[CaptureActions] start done, isCapturing=${service.isCapturing}');
+    debugPrint(
+        '[CaptureActions] start done, isCapturing=${service.isCapturing}');
   }
 
   void stop() {

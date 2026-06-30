@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/colors.dart';
@@ -27,16 +28,30 @@ class RoomScreen extends ConsumerStatefulWidget {
 
 class _RoomScreenState extends ConsumerState<RoomScreen> {
   bool _dialogShowing = false;
+  String? _bannerMessage;
+  Timer? _bannerTimer;
 
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _setupListeners());
+  void dispose() {
+    _bannerTimer?.cancel();
+    super.dispose();
   }
 
-  void _setupListeners() {
+  @override
+  Widget build(BuildContext context) {
     ref.listen(remoteControlStateProvider, (prev, next) {
+      final prevState = prev?.valueOrNull;
       final state = next.valueOrNull;
+      if (prevState?.phase == RemoteControlPhase.controlling &&
+          state?.phase == RemoteControlPhase.idle) {
+        final reason = state?.releaseReason;
+        if (reason == 'screen_share_stopped') {
+          _showBanner('Share screen is stopped', duration: 5);
+        } else if (reason == 'stopped_by_sharer' || reason == null) {
+          _showBanner('Screen control is stopped', duration: 5);
+        }
+        // 'released_by_controller' → no banner, controller self-released
+      }
       if (state == null) return;
       if (state.phase == RemoteControlPhase.beingRequested &&
           state.participantIdentity != null &&
@@ -58,10 +73,14 @@ class _RoomScreenState extends ConsumerState<RoomScreen> {
         );
       }
     });
-  }
-
-  @override
-  Widget build(BuildContext context) {
+    ref.listen<bool>(isCapturingProvider, (prev, next) {
+      if (prev == true && next == false) {
+        final s = ref.read(remoteControlStateProvider).valueOrNull;
+        if (s?.phase == RemoteControlPhase.beingControlled) {
+          ref.read(remoteControlServiceProvider).stopBeingControlled(reason: 'screen_share_stopped');
+        }
+      }
+    });
     final layoutMode = ref.watch(layoutModeProvider);
     final focused = ref.watch(focusedParticipantProvider);
     final isCapturing = ref.watch(isCapturingProvider);
@@ -79,9 +98,7 @@ class _RoomScreenState extends ConsumerState<RoomScreen> {
             IconButton(
               icon: Icon(Icons.stop_screen_share, color: Colors.red),
               tooltip: 'Stop being controlled',
-              onPressed: () {
-                ref.read(remoteControlServiceProvider).stopBeingControlled();
-              },
+              onPressed: _confirmStopBeingControlled,
             ),
             if (!isCapturing)
             IconButton(
@@ -93,18 +110,7 @@ class _RoomScreenState extends ConsumerState<RoomScreen> {
             IconButton(
               icon: const Icon(Icons.stop_screen_share),
               tooltip: 'Stop Sharing',
-              onPressed: () {
-                final captureService = ref.read(captureServiceProvider);
-                final roomService = ref.read(roomServiceProvider);
-                final sid = captureService.publishedSid;
-                if (sid != null) {
-                  debugPrint('[RoomScreen] unpublishing track: $sid');
-                  roomService.unpublishScreenTrack(sid);
-                  captureService.clearPublished();
-                }
-                captureService.stopCapture();
-                ref.read(isCapturingProvider.notifier).state = false;
-              },
+              onPressed: _confirmStopSharing,
             ),
           IconButton(
             icon: Icon(
@@ -124,20 +130,52 @@ class _RoomScreenState extends ConsumerState<RoomScreen> {
           const SizedBox(width: AppDimensions.sm),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          Expanded(
-            child: layoutMode == LayoutMode.focus
-                ? _buildFocusLayout(context, ref, focused, allParticipants)
-                : _buildGalleryLayout(context, ref, allParticipants),
+          Column(
+            children: [
+              Expanded(
+                child: Stack(
+                  children: [
+                    Visibility(
+                      visible: layoutMode == LayoutMode.focus,
+                      maintainState: true,
+                      child: _buildFocusLayout(context, ref, focused, allParticipants),
+                    ),
+                    Visibility(
+                      visible: layoutMode == LayoutMode.gallery,
+                      maintainState: true,
+                      child: _buildGalleryLayout(context, ref, allParticipants),
+                    ),
+                  ],
+                ),
+              ),
+              ThumbnailBar(
+                participants: allParticipants,
+                focusedParticipantId: focused?.identity,
+                onParticipantTap: (participant) {
+                  ref.read(focusedParticipantProvider.notifier).state = participant;
+                },
+              ),
+            ],
           ),
-          ThumbnailBar(
-            participants: allParticipants,
-            focusedParticipantId: focused?.identity,
-            onParticipantTap: (participant) {
-              ref.read(focusedParticipantProvider.notifier).state = participant;
-            },
-          ),
+          if (_bannerMessage != null)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black54,
+                child: Center(
+                  child: Text(
+                    _bannerMessage!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -205,6 +243,82 @@ class _RoomScreenState extends ConsumerState<RoomScreen> {
         },
       ),
     );
+  }
+
+  void _showBanner(String message, {int duration = 5}) {
+    _bannerTimer?.cancel();
+    setState(() => _bannerMessage = message);
+    _bannerTimer = Timer(Duration(seconds: duration), () {
+      if (mounted) setState(() => _bannerMessage = null);
+    });
+  }
+
+  void _confirmStopBeingControlled() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Stop Being Controlled'),
+        content: const Text('Are you sure you want to stop being controlled?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              ref.read(remoteControlServiceProvider).stopBeingControlled();
+            },
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Stop'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmStopSharing() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Stop Sharing'),
+        content: const Text(
+          'You will stop sharing your screen and remote control will be cancelled. Are you sure?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _doStopSharing();
+            },
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Stop'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _doStopSharing() {
+    final service = ref.read(remoteControlServiceProvider);
+    final s = ref.read(remoteControlStateProvider).valueOrNull;
+    if (s?.phase == RemoteControlPhase.beingControlled) {
+      service.stopBeingControlled(reason: 'screen_share_stopped');
+    }
+    final captureService = ref.read(captureServiceProvider);
+    final roomService = ref.read(roomServiceProvider);
+    final sid = captureService.publishedSid;
+    if (sid != null) {
+      debugPrint('[RoomScreen] unpublishing track: $sid');
+      roomService.unpublishScreenTrack(sid);
+      captureService.clearPublished();
+    }
+    captureService.stopCapture();
+    ref.read(isCapturingProvider.notifier).state = false;
   }
 
   void _onShareScreen() {

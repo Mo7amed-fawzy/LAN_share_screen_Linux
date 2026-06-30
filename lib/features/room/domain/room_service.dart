@@ -13,20 +13,9 @@ class RoomService {
 
   lk.Room? get room => _repository.room;
 
-  Future<void> joinRoom({
-    required String url,
-    required String token,
-  }) async {
-    try {
-      await _repository.connect(url, token);
-    } catch (e, s) {
-      throw handleError(e, s);
-    }
-  }
-
   Future<void> leaveRoom() async {
     try {
-      await _repository.disconnect();
+      await _repository.room?.disconnect();
     } catch (e, s) {
       logError('Error leaving room', e, s);
     }
