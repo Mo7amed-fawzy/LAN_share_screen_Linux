@@ -1,5 +1,6 @@
 import 'package:logging/logging.dart';
 import 'failures.dart';
+import '../network/errors/network_failures.dart';
 
 final Logger _log = Logger('ErrorHandler');
 
@@ -24,6 +25,24 @@ Failure handleError(Object error, [StackTrace? stack]) {
   }
   if (message.contains('subscribe')) {
     return SubscribeFailure(message);
+  }
+  if (message.contains('discovery') || message.contains('multicast')) {
+    return DiscoveryFailure(message);
+  }
+  if (message.contains('host') || message.contains('server')) {
+    return HostStartFailure(message);
+  }
+  if (message.contains('heartbeat') || message.contains('keepalive')) {
+    return HeartbeatLossFailure(message);
+  }
+  if (message.contains('election')) {
+    return ElectionFailure(message);
+  }
+  if (message.contains('port')) {
+    return PortInUseFailure(message);
+  }
+  if (message.contains('protocol') || message.contains('version')) {
+    return ProtocolVersionMismatch(expected: '', received: message);
   }
 
   return UnknownFailure(message);

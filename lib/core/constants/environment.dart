@@ -3,7 +3,7 @@ class Environment {
 
   static const String liveKitUrl = String.fromEnvironment(
     'LIVEKIT_URL',
-    defaultValue: 'ws://192.168.1.9:7880',
+      defaultValue: 'ws://192.168.1.186:7880',
   );
 
   static const String apiKey = String.fromEnvironment(
